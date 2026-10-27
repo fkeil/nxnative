@@ -26,5 +26,31 @@ The host layer (`dm/host/`) acts as a stand-in for the Switch's Horizon OS. It i
 - **Input:** Apple's GameController framework would be replaced with **XInput** or **Windows.Gaming.Input** to read Xbox, DualSense, and other standard PC controllers.
 - **Windowing:** The AppKit/UIKit shell would be replaced with a standard **Win32** or **WinUI 3** windowing application.
 
+## Implementation Milestones
+If you are aiming to execute this port (e.g., using an LLM coding agent on your Snapdragon PC), it must be broken down into manageable phases.
+
+**Milestone 1: Build System and Environment**
+- Create a `CMakeLists.txt` (or update `pyproject.toml` scripts) to support MSVC or Clang-cl for Windows ARM64.
+- Stub out macOS/iOS specific code (AppKit/UIKit, Metal, CoreAudio) with empty macros or dummy files so the project can compile on Windows.
+
+**Milestone 2: Memory and OS Host (SVCs)**
+- Port `dm/host/hle_svc.c` and related files to use Win32 memory APIs (`VirtualAlloc2`, `MapViewOfFile3`).
+- Implement the Windows ARM64 TEB setup for Thread Local Storage (TLS) in `patch_nso.py`.
+- Port the threading and synchronization primitives (e.g., replace POSIX mutexes and condition variables with `SRWLock` and `WaitOnAddress`).
+
+**Milestone 3: Windowing and Input**
+- Implement a basic Win32 or WinUI 3 window to replace the Apple front-end (`dm/host/front_mac.m`).
+- Connect keyboard and basic XInput/Windows.Gaming.Input for controllers.
+
+**Milestone 4: The Graphics Pipeline (The Hardest Part)**
+- Replace `dm/gfx/nvn/nvn_mtl.m` with a new Vulkan backend (`dm/gfx/nvn/nvn_vk.c`).
+- Setup the Vulkan instance, physical device, swapchain, and command buffers.
+- Pipe the generated SPIR-V shaders directly into Vulkan graphics pipelines, bypassing the SPIRV-Cross to Metal conversion.
+- Implement NVN texture formats and buffer mappings to Vulkan equivalents.
+
+**Milestone 5: Audio and Polish**
+- Implement WASAPI or XAudio2 for sound playback to replace CoreAudio.
+- Fix bugs, optimize the Vulkan render loop, and test game compatibility.
+
 ## Conclusion
 A Windows on ARM port (whether on Snapdragon or future Nvidia chips) is highly feasible and would benefit tremendously from the native ARM64 execution that `nxnative` pioneers. In fact, due to Windows on ARM's support for 4 KiB memory pages, native Vulkan drivers, and potentially highly-compatible Nvidia GPUs in the future, some of the most complex subsystems in the Apple Silicon version (like memory alignment patching and Metal shader cross-compilation) could be simplified or removed entirely.
