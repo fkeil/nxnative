@@ -1,8 +1,8 @@
-# Porting nxnative to Windows on Snapdragon (ARM64)
+# Porting nxnative to Windows on ARM64 (Snapdragon & Upcoming Nvidia Chips)
 
 The core premise of `nxnative` is that Nintendo Switch games are compiled for an ARM64 processor (the Tegra X1). Instead of emulating the CPU instructions, `nxnative` runs them directly on Apple Silicon (which is also ARM64), acting only as a translation layer for the OS and graphics.
 
-Because Windows on Snapdragon devices (like the Snapdragon X Elite) are also built on ARM64 architecture, this exact same "native execution" approach is entirely possible. However, the host environment and graphics stack would need to be heavily adapted. Here is a breakdown of how a Windows Snapdragon port would work:
+Because Windows on ARM devices (like those with Snapdragon X Elite or upcoming Nvidia ARM PC chips) are also built on ARM64 architecture, this exact same "native execution" approach is entirely possible. However, the host environment and graphics stack would need to be adapted. Here is a breakdown of how a Windows ARM64 port would work:
 
 ## 1. CPU and Native Execution
 Since the Snapdragon processor is an ARM64 chip, the game's machine code can execute natively on the CPU without instruction emulation, ensuring maximum performance just like on Apple Silicon.
@@ -14,6 +14,7 @@ Since the Snapdragon processor is an ARM64 chip, the game's machine code can exe
 `nxnative` currently translates the Switch's proprietary NVN graphics API to Apple's Metal API (`dm/gfx/nvn`).
 - **Graphics API:** For Windows, this layer would need to be rewritten to translate NVN calls to **Vulkan** or **DirectX 12**. Given that the project already uses Vulkan headers and SPIR-V internally, a Vulkan backend would be the most natural fit. Snapdragon Adreno GPUs have excellent Vulkan support.
 - **Shader Translation:** The project currently uses `Ryujinx.Graphics.Shader` to translate Maxwell (Switch GPU) shaders into SPIR-V, and then uses SPIRV-Cross to convert them to Metal Shading Language (MSL). For Windows, the conversion to MSL would be dropped. The generated **SPIR-V could be consumed directly by Vulkan**, simplifying the shader pipeline.
+- **Upcoming Nvidia ARM Chips:** If Windows on ARM hardware features Nvidia graphics, the graphics translation layer would be even more seamless. Since the Switch uses an Nvidia Tegra X1 (Maxwell architecture), modern Nvidia PC chips would share a common architectural lineage. This could mean fewer compatibility workarounds for things like proprietary texture formats, depth behaviors, or shader execution quirks, allowing NVN calls and shaders to map very cleanly to the desktop GPU.
 
 ## 3. Host System and Horizon OS (SVCs)
 The host layer (`dm/host/`) acts as a stand-in for the Switch's Horizon OS. It intercepts SVCs (system calls) and routes them to the host OS.
@@ -26,4 +27,4 @@ The host layer (`dm/host/`) acts as a stand-in for the Switch's Horizon OS. It i
 - **Windowing:** The AppKit/UIKit shell would be replaced with a standard **Win32** or **WinUI 3** windowing application.
 
 ## Conclusion
-A Windows on Snapdragon port is highly feasible and would benefit tremendously from the native ARM64 execution that `nxnative` pioneers. In fact, due to Windows on ARM's support for 4 KiB memory pages and native Vulkan drivers, some of the most complex subsystems in the Apple Silicon version (like memory alignment patching and Metal shader cross-compilation) could be simplified or removed entirely.
+A Windows on ARM port (whether on Snapdragon or future Nvidia chips) is highly feasible and would benefit tremendously from the native ARM64 execution that `nxnative` pioneers. In fact, due to Windows on ARM's support for 4 KiB memory pages, native Vulkan drivers, and potentially highly-compatible Nvidia GPUs in the future, some of the most complex subsystems in the Apple Silicon version (like memory alignment patching and Metal shader cross-compilation) could be simplified or removed entirely.
