@@ -67,6 +67,7 @@ CUTS = {
   '3644a6760469451cabc99f00c540acc2': [
     (0x37c140, '08fca752', '087ca052', 'AddressRegionManager constructor: node area limit mov w8,#0x3fe00000 → mov w8,#0x3e00000'),
     (0x37c1dc, '09fca752', '097ca052', 'AddressRegionManager constructor: length of the node area registered as an occupied region mov w9,#0x3fe00000 → mov w9,#0x3e00000'),
+    (0x37c33c, '0a00a852', '0a40a052', 'AllocateAddressRegion: alignment of regions of 1 GB and more mov w10,#0x40000000 → mov w10,#0x2000000 (32 MB, as from 32 MB up)'),
   ],
   # Mario + Rabbids Sparks of Hope 1.6.2225577 (SDK 13.3.5): the same constructor
   # and placement code as nirvanA Initiative above. Snowdrop reserves a small

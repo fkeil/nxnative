@@ -70,14 +70,16 @@ typedef struct { double at, hold; uint64_t btn; int32_t lx, ly, rx, ry; int fram
 static key_step g_steps[KEY_STEPS]; static int g_nsteps;
 static void *keys_main(void *arg) {
     (void)arg; struct timespec t0; clock_gettime(CLOCK_MONOTONIC, &t0);
+    LOG("[hid] keys_main thread started, %d steps queued", g_nsteps);
     for (int i = 0; i < g_nsteps; i++) {
         for (;;) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); double el = (t.tv_sec - t0.tv_sec) + (t.tv_nsec - t0.tv_nsec) / 1e9;
                    if (g_steps[i].frame ? (double)dm_guest_frame() >= g_steps[i].at : el >= g_steps[i].at) break; usleep(5000); }
-        LOG("DM_KEYS: %s%.2f press %#llx (hold %.2f s)", g_steps[i].frame ? "frame " : "", g_steps[i].at, (unsigned long long)g_steps[i].btn, g_steps[i].hold);
+        LOG("DM_KEYS: %s%.2f press %#llx (hold %.2f s) [cur guest_frame=%llu]", g_steps[i].frame ? "frame " : "", g_steps[i].at, (unsigned long long)g_steps[i].btn, g_steps[i].hold, (unsigned long long)dm_guest_frame());
         if (g_steps[i].tap) { dm_touch t = {0, g_steps[i].tx, g_steps[i].ty}; dm_touch_set(&t, 1); }
         script_set(g_steps[i].btn, g_steps[i].lx, g_steps[i].ly, g_steps[i].rx, g_steps[i].ry); usleep((useconds_t)(g_steps[i].hold * 1e6)); script_set(0, 0, 0, 0, 0);
         if (g_steps[i].tap) dm_touch_set(NULL, 0);
     }
+    LOG("[hid] keys_main finished all %d steps", g_nsteps);
     return NULL;
 }
 // The keys of one step, "key[+key]" (the hold and repeat already cut off), into st
@@ -106,7 +108,9 @@ static void parse_keys(char *spec, key_step *st) {
 static void ctl_start(void);
 void hid_keys_init(void) {
     ctl_start();
-    const char *e = getenv("DM_KEYS"); if (!e || !*e) return;
+    const char *e = getenv("DM_KEYS");
+    LOG("[hid] hid_keys_init: DM_KEYS=%s", e ? e : "(null)");
+    if (!e || !*e) return;
     char buf[4096]; snprintf(buf, sizeof buf, "%s", e);
     for (char *tok = strtok(buf, ","); tok && g_nsteps < KEY_STEPS; tok = strtok(NULL, ",")) {
         char *c = strchr(tok, ':'); if (!c) { LOG("[RED] DM_KEYS step lacks 'seconds:': %s", tok); continue; }
@@ -199,9 +203,14 @@ static int one_player(void) { return !(atomic_load(&g_ids_supported) & ((1u << D
 static uint32_t merged_players(void) { return one_player() ? unsupported_players() : 0; }
 static int player_of(uint32_t id) {   // the reported player on npad id; -1 when none
     if (id == connected_id()) return 0;
+    if (id == NPAD_HANDHELD || id == NPAD_NO1) return 0;
     return id > 0 && id < DM_PLAYERS && reported((int)id) ? (int)id : -1;
 }
-static uint32_t style_of(uint32_t id) { return player_of(id) < 0 ? 0 : id == NPAD_HANDHELD ? STYLE_HANDHELD : STYLE_FULLKEY; }
+static uint32_t style_of(uint32_t id) {
+    if (player_of(id) < 0) return 0;
+    if (id == NPAD_HANDHELD) return STYLE_HANDHELD | STYLE_FULLKEY | STYLE_JOYDUAL;
+    return STYLE_FULLKEY | STYLE_JOYDUAL | STYLE_HANDHELD;
+}
 static int32_t ax(uint64_t v, int i) { return (int16_t)(v >> (16 * i)); }
 static int32_t pick(int32_t a, int32_t b) { return (a < 0 ? -a : a) >= (b < 0 ? -b : b) ? a : b; }   // whichever of two sources is deflected more
 
@@ -254,6 +263,12 @@ static void fill(NpadState *s, uint32_t id, uint32_t style) {
     if (s->ry < -STICK_THRESH) b |= 1u << 23;
     s->buttons = b;
     s->attributes = ATTR_CONNECTED | (id == NPAD_HANDHELD ? ATTR_WIRED | ATTR_LEFT_CONN | ATTR_LEFT_WIRED | ATTR_RIGHT_CONN | ATTR_RIGHT_WIRED : ATTR_LEFT_CONN | ATTR_RIGHT_CONN);
+    if (b != 0) {
+        static int logged_btn = 0;
+        if (logged_btn++ < 40) {
+            LOG("[hid] fill: id=%u style=%#x buttons=%#llx lx=%d ly=%d", id, style, (unsigned long long)b, s->lx, s->ly);
+        }
+    }
 }
 // GetNpadStates(out, n, id): newest first, n entries: the current state repeated with consecutive sampling numbers. The host keeps no history, but on hardware the
 // 16-entry history is always full, and games read all of it whatever count comes back: Super Mario Odyssey (main+0x93fc20) polls every controller slot each frame, which advances

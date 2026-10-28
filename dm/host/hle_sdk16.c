@@ -86,7 +86,11 @@ static font_t std_f, ext_f;
 static font_t font_get(int type) {
     static int std_done, ext_done;
     pthread_mutex_lock(&font_mu);
+#ifdef _WIN32
+    if (!std_done) { std_done = 1; std_f = font_first("DM_SHARED_FONT", "standard.ttf", "C:/Windows/Fonts/arial.ttf");
+#else
     if (!std_done) { std_done = 1; std_f = font_first("DM_SHARED_FONT", "standard.ttf", "/System/Library/Fonts/Supplemental/Arial Unicode.ttf");
+#endif
                      if (!std_f.p) LOG("[RED] cannot open the standard shared font (point DM_SHARED_FONT or DM_FONT_DIR/standard.ttf at a TTF)"); }
     if (type == 5 && !ext_done) { ext_done = 1; ext_f = font_first("DM_SHARED_FONT_EXT", "nintendo_ext.ttf", NULL);
                                   if (!ext_f.p) LOG("[YELLOW] Nintendo extended shared font missing (dm/tools/make_ext_font.py generates nintendo_ext.ttf): button icons will be drawn as '?'"); }

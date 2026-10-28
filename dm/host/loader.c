@@ -34,10 +34,14 @@ static void create_keys(void) {
     LOG("key numbers K18=%lu KTLS=%lu KTLR=%lu KGATE=%lu", g_key18, g_keytls, g_keytlr, g_keygate);
 }
 
-// K slot check: the pthread TSD layout is fixed, slot = tpidrro_el0 + 8*key
+// K slot check: the pthread TSD layout is fixed, slot = tpidrro_el0 + 8*key (tpidr_el0 on Windows ARM64)
 static void tsd_check(void) {
     pthread_setspecific(g_key18, (void *)0x1234);
+#ifdef _WIN32
+    uint64_t base; __asm__ volatile("mrs %0, tpidr_el0" : "=r"(base));
+#else
     uint64_t base; __asm__ volatile("mrs %0, tpidrro_el0" : "=r"(base));
+#endif
     uint64_t off = *(uint64_t *)(g_mod[0].base + g_mod[0].key_page_off + g_mod[0].key_idx[KEY_K18] * 8);
     if (((uint64_t *)(base & ~7ull))[off / 8] != 0x1234) die("TSD layout mismatch");
     pthread_setspecific(g_key18, 0);
@@ -534,6 +538,16 @@ static uint8_t *slurp(const char *path, size_t *n) {
 
 // Seal the code area immediately after copying into anonymous pages (16 KB pages): [0, text_end) and the patch area are read-only+execute, and from then on any write to the code area crashes on the spot;
 // what lies between (ro and data on the same page can only go together) is writable
+#ifdef _WIN32
+// On Windows ARM64 tpidrro_el0 holds the kernel CPU number, while tpidr_el0 is user-writable and preserved across context switches:
+// win_compat.c stores the thread's TSD slot array base in tpidr_el0, and the patch area's mrs xT, tpidrro_el0 (0xD53BD060 | t) is flipped to mrs xT, tpidr_el0 (0xD53BD040 | t) before sealing.
+static void win_patch_tpidr(uint8_t *patch_base, size_t patch_bytes) {
+    uint32_t *w = (uint32_t *)patch_base;
+    size_t n = patch_bytes / 4;
+    for (size_t i = 0; i < n; i++)
+        if ((w[i] & ~31u) == 0xD53BD060u) w[i] ^= 0x20u;
+}
+#endif
 static void map_image(module_t *m, const char *dir) {
     char path[1024]; snprintf(path, sizeof path, "%s/%s.patched.bin", dir, m->name);
     size_t sz; uint8_t *raw = slurp(path, &sz);
@@ -547,6 +561,9 @@ static void map_image(module_t *m, const char *dir) {
         if (a == MAP_FAILED) die("%s mmap %#llx", m->name, (unsigned long long)(pre + m->size));
         m->base = a + pre;
         memcpy(m->base, raw, fl); memcpy(a, raw + fl, sz - fl); free(raw); install_key_page(m);
+#ifdef _WIN32
+        win_patch_tpidr(a, sz - fl);
+#endif
         uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
         if (mprotect(m->base, rx, PROT_READ | PROT_EXEC)) die("%s mprotect text", m->name);
         if (mprotect(a, m->patch_len, PROT_READ | PROT_EXEC)) die("%s mprotect patch", m->name);
@@ -560,6 +577,9 @@ static void map_image(module_t *m, const char *dir) {
     uint64_t rx = (m->text_end + 0x3FFF) & ~0x3FFFull;
     if (mprotect(m->base, rx, PROT_READ | PROT_EXEC)) die("%s mprotect text", m->name);
     uint64_t po = m->patch_off & ~0x3FFFull;
+#ifdef _WIN32
+    if (sz > (size_t)m->patch_off) win_patch_tpidr(m->base + m->patch_off, sz - (size_t)m->patch_off);
+#endif
     if (mprotect(m->base + po, m->size - po, PROT_READ | PROT_EXEC)) die("%s mprotect patch", m->name);
 }
 #endif

@@ -47,7 +47,7 @@ class Game:
 
 
 def extra_dirs():   # profile folders outside the repository (DM_GAMES_DIR), searched after dm/games
-    return [Path(p) for p in os.environ.get('DM_GAMES_DIR', '').split(':') if p]
+    return [Path(p) for p in re.split(r';|:(?![\\/])', os.environ.get('DM_GAMES_DIR', '')) if p]
 
 
 def search_dirs():   # dm/games, then DM_GAMES_DIR; DM_GAMES_FIRST=1 the other way round

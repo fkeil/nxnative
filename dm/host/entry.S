@@ -3,20 +3,25 @@
 // 1) unimpl_entry: stub entry for unimplemented imports, x9 = stub number; save x0-x8+lr and call unimpl_c(idx, regs).
 // 2) dm_gate: the rewriter replaces svc / cntpct reads with "bl to this entry". On entry lr = the gate block return point (gate_dispatch uses it to look up which gate this is),
 //    save x0-x30 to a contiguous area on the stack, call gate_dispatch(ret, regs), write back x0 (gate return value), return.
+#ifdef _WIN32
+#define CSYM(x) x
+#else
+#define CSYM(x) _##x
+#endif
     .text
-    .globl _unimpl_stubs
+    .globl CSYM(unimpl_stubs)
     .p2align 3
-_unimpl_stubs:
+CSYM(unimpl_stubs):
     .set k, 0
     .rept 4096                // = hle.c MAX_STUB
     movz x9, #k
-    b _unimpl_entry
+    b CSYM(unimpl_entry)
     .set k, k + 1
     .endr
 
-    .globl _unimpl_entry
+    .globl CSYM(unimpl_entry)
     .p2align 2
-_unimpl_entry:
+CSYM(unimpl_entry):
     stp x29, x30, [sp, #-96]!
     mov x29, sp
     stp x0, x1, [sp, #16]
@@ -26,13 +31,13 @@ _unimpl_entry:
     str x8, [sp, #80]
     mov x0, x9
     add x1, sp, #16
-    bl _unimpl_c
+    bl CSYM(unimpl_c)
     ldp x29, x30, [sp], #96
     ret
 
-    .globl _dm_gate
+    .globl CSYM(dm_gate)
     .p2align 2
-_dm_gate:
+CSYM(dm_gate):
     // Open a 256-byte frame and save x0..x30 (x0..x29 in pairs, x30 alone); the gate may read and modify x0..x30
     sub sp, sp, #800
     stp x0, x1, [sp, #0]
@@ -75,7 +80,7 @@ _dm_gate:
     str x9, [sp, #784]
     mov x0, x30              // Return point = gate identifier
     mov x1, sp               // regs
-    bl _gate_dispatch
+    bl CSYM(gate_dispatch)
     ldr x9, [sp, #784]
     msr fpcr, x9
     ldr x9, [sp, #776]
@@ -121,14 +126,14 @@ _dm_gate:
 
 // 3) dm_thread_enter(entry, arg, sp): guest thread start. Switch to the guest stack given by the SDK and call entry with x0 = argument;
 //    Horizon threads must exit via ExitThread; returning from entry is reported as an error.
-    .globl _dm_thread_enter
+    .globl CSYM(dm_thread_enter)
     .p2align 2
-_dm_thread_enter:
+CSYM(dm_thread_enter):
     mov sp, x2
     mov x29, #0
     mov x16, x0
     mov x0, x1
     adr x30, 1f
     br x16
-1:  bl _dm_thread_returned
+1:  bl CSYM(dm_thread_returned)
     brk #0

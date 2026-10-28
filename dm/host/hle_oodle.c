@@ -187,6 +187,10 @@ void dm_oodle_serve_maybe(int late) {
     if (!getenv("DM_OODLE_SERVE")) return;
     dec_find("DM_OODLE_SERVE");
     if (late != (g_dec.lz5 != NULL)) return;
+#ifdef _WIN32
+    _setmode(0, _O_BINARY);
+    _setmode(1, _O_BINARY);
+#endif
     enum { SLACK = 0x10000 };
     size_t scratch_n = 16u << 20; uint8_t *scratch = malloc(scratch_n), *comp = NULL, *raw = NULL; size_t comp_cap = 0, raw_cap = 0; uint64_t n = 0, bad = 0;   // the decoder's work memory, as for a job
     if (!scratch) die("DM_OODLE_SERVE: decoder memory");

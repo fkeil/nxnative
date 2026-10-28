@@ -1,0 +1,10 @@
+@echo off
+set "DM_GAME=0100152000022000"
+set "DM_GAMES_DIR=%~dp0dm\games"
+set "DM_EXE=C:\Users\nando\Downloads\mk8_build\patched\v0"
+set "DM_ROMFS=C:\Users\nando\Downloads\mk8_build\extract\v0\RomFS.img"
+set "DM_SAVE=C:\Users\nando\Downloads\mk8_build\run\save"
+set "DM_TEMP=C:\Users\nando\Downloads\mk8_build\run\temp"
+set "DM_AUDIO=1"
+set "DM_FRAMES=120"
+build_win\dmhost.exe "C:\Users\nando\Downloads\mk8_build\patched\v0"
