@@ -557,10 +557,11 @@ void mtl_exec(const uint8_t *p) {
                 const p_bind_buf *b = bind_buf_rec(h.op, a, &tmp);
                 if (b && b->stage >= 0 && b->stage < 6 && b->index >= 0 && b->index < 16) {
                     static int logged_ubo = 0;
-                    if (logged_ubo < 10) {
+                    uint64_t cur_pn = atomic_load(&g_present_n);
+                    if (logged_ubo < 10 || cur_pn == 60) {
                         logged_ubo++;
-                        LOG("[nvn-win] BIND_UBO stage=%d index=%d addr=%#llx size=%llu",
-                            b->stage, b->index, (unsigned long long)b->addr, (unsigned long long)b->size);
+                        LOG("[nvn-win] BIND_UBO [f=%llu] stage=%d index=%d addr=%#llx size=%llu",
+                            (unsigned long long)cur_pn, b->stage, b->index, (unsigned long long)b->addr, (unsigned long long)b->size);
                     }
                     vk_win_set_ubo(b->stage, b->index, (const void *)(uintptr_t)b->addr, (size_t)b->size);
                 }

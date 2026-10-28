@@ -261,7 +261,7 @@ int front_win_capture_bmp(const char *path) {
             }
         }
     }
-    if (has_fb_data) {
+    if (has_fb_data || (vk_win_is_active() && g_fb_pixels && g_fb_w > 0 && g_fb_h > 0)) {
         int ok = save_bmp(path, g_fb_pixels, g_fb_w, g_fb_h);
         pthread_mutex_unlock(&g_fb_mu);
         return ok;

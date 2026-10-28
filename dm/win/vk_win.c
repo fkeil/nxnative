@@ -4,6 +4,7 @@
 #include "vulkan/vulkan_win.h"
 #include "../gfx/nvn/nvn_mtl.h"
 #include "../gfx/nvn/nvn_obj.h"
+#include "../gfx/nvn/nvn_tex.h"
 #include "../gfx/tex/nvn_deswizzle.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,6 +28,7 @@ typedef struct {
     int is_sampler;
     int tex_slot;
     int is_storage_img;
+    int is_ssbo;
 } vk_refl_binding_t;
 
 typedef struct {
@@ -540,10 +542,14 @@ static int vk_get_or_create_shader_idx(const char *key, int is_ps) {
                     int bank = atoi(cp + 2);
                     if (bank == 0) {
                         rb->is_driver = 1;
-                    } else {
+                    } else if (bank == 1) {
+                        rb->is_c1 = 1;
+                    } else if (bank >= 3) {
                         rb->is_ubo = 1;
                         rb->ubo_stage = st;
-                        rb->ubo_index = bank;
+                        rb->ubo_index = bank - 3;
+                    } else {
+                        rb->is_driver = 1;
                     }
                 } else if (strncmp(name, "fp_t_", 5) == 0 || strncmp(name, "vp_t_", 5) == 0) {
                     rb->type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -559,9 +565,12 @@ static int vk_get_or_create_shader_idx(const char *key, int is_ps) {
                             rb->tex_slot = (raw_hex >= 8) ? (raw_hex - 8) / 2 : raw_hex;
                         }
                     }
-                } else if (strncmp(name, "fp_i_", 5) == 0) {
+                } else if (strncmp(name, "fp_i_", 5) == 0 || strncmp(name, "vp_i_", 5) == 0) {
                     rb->type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
                     rb->is_storage_img = 1;
+                } else if (strncmp(name, "fp_s", 4) == 0 || strncmp(name, "vp_s", 4) == 0) {
+                    rb->type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+                    rb->is_ssbo = 1;
                 } else {
                     rb->type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
                     rb->is_ubo = 1;
@@ -1368,7 +1377,7 @@ int vk_win_init(HWND hwnd, int width, int height) {
     VkBufferCreateInfo sbuf_ci = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = 65536,
-        .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+        .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
     };
     if (g_vk.CreateBuffer(g_vk.device, &sbuf_ci, NULL, &g_vk.support_buf) == VK_SUCCESS) {
         VkMemoryRequirements sbuf_req;
@@ -1416,7 +1425,7 @@ int vk_win_init(HWND hwnd, int width, int height) {
     VkBufferCreateInfo drv_ci = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = 65536,
-        .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+        .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
     };
     if (g_vk.CreateBuffer(g_vk.device, &drv_ci, NULL, &g_vk.driver_buf) == VK_SUCCESS) {
         VkMemoryRequirements drv_req;
@@ -1443,7 +1452,7 @@ int vk_win_init(HWND hwnd, int width, int height) {
     VkBufferCreateInfo c1_ci = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = c1_total_sz,
-        .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+        .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
     };
     if (g_vk.CreateBuffer(g_vk.device, &c1_ci, NULL, &g_vk.c1_buf) == VK_SUCCESS) {
         VkMemoryRequirements c1_req;
@@ -1466,7 +1475,7 @@ int vk_win_init(HWND hwnd, int width, int height) {
     VkBufferCreateInfo ubuf_ci = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
         .size = 8388608,
-        .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT
+        .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT
     };
     if (g_vk.CreateBuffer(g_vk.device, &ubuf_ci, NULL, &g_vk.ubo_data_buf) == VK_SUCCESS) {
         VkMemoryRequirements ubuf_req;
@@ -1485,10 +1494,10 @@ int vk_win_init(HWND hwnd, int width, int height) {
         }
     }
 
-    // Dynamic Index Buffer (4 MiB host-visible coherent)
+    // Dynamic Index Buffer (16 MiB host-visible coherent)
     VkBufferCreateInfo ibuf_ci = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = 4194304,
+        .size = 16777216,
         .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT
     };
     if (g_vk.CreateBuffer(g_vk.device, &ibuf_ci, NULL, &g_vk.index_buf) == VK_SUCCESS) {
@@ -1501,18 +1510,18 @@ int vk_win_init(HWND hwnd, int width, int height) {
         };
         if (g_vk.AllocateMemory(g_vk.device, &ibuf_ai, NULL, &g_vk.index_mem) == VK_SUCCESS) {
             g_vk.BindBufferMemory(g_vk.device, g_vk.index_buf, g_vk.index_mem, 0);
-            g_vk.MapMemory(g_vk.device, g_vk.index_mem, 0, 4194304, 0, &g_vk.index_mapped);
+            g_vk.MapMemory(g_vk.device, g_vk.index_mem, 0, 16777216, 0, &g_vk.index_mapped);
             if (g_vk.index_mapped) {
-                memset(g_vk.index_mapped, 0, 4194304);
+                memset(g_vk.index_mapped, 0, 16777216);
             }
         }
     }
     g_vk.index_buf_offset = 0;
 
-    // Dynamic Vertex Buffer (16 MiB host-visible coherent)
+    // Dynamic Vertex Buffer (64 MiB host-visible coherent)
     VkBufferCreateInfo vbuf_ci = {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .size = 16777216,
+        .size = 67108864,
         .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT
     };
     if (g_vk.CreateBuffer(g_vk.device, &vbuf_ci, NULL, &g_vk.vbuf) == VK_SUCCESS) {
@@ -1525,9 +1534,9 @@ int vk_win_init(HWND hwnd, int width, int height) {
         };
         if (g_vk.AllocateMemory(g_vk.device, &vbuf_ai, NULL, &g_vk.vbuf_mem) == VK_SUCCESS) {
             g_vk.BindBufferMemory(g_vk.device, g_vk.vbuf, g_vk.vbuf_mem, 0);
-            g_vk.MapMemory(g_vk.device, g_vk.vbuf_mem, 0, 16777216, 0, &g_vk.vbuf_mapped);
+            g_vk.MapMemory(g_vk.device, g_vk.vbuf_mem, 0, 67108864, 0, &g_vk.vbuf_mapped);
             if (g_vk.vbuf_mapped) {
-                memset(g_vk.vbuf_mapped, 0, 16777216);
+                memset(g_vk.vbuf_mapped, 0, 67108864);
             }
         }
     }
@@ -1687,15 +1696,16 @@ int vk_win_init(HWND hwnd, int width, int height) {
     g_vk.CreateSampler(g_vk.device, &samp_ci, NULL, &g_vk.dummy_sampler);
 
     // Descriptor Pool
-    VkDescriptorPoolSize pool_sizes[3] = {
+    VkDescriptorPoolSize pool_sizes[4] = {
         { .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, .descriptorCount = 4096 },
+        { .type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, .descriptorCount = 512 },
         { .type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, .descriptorCount = 4096 },
         { .type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, .descriptorCount = 512 }
     };
     VkDescriptorPoolCreateInfo dp_ci = {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .maxSets = 1024,
-        .poolSizeCount = 3,
+        .poolSizeCount = 4,
         .pPoolSizes = pool_sizes
     };
     g_vk.CreateDescriptorPool(g_vk.device, &dp_ci, NULL, &g_vk.desc_pool);
@@ -1822,12 +1832,22 @@ static VkImageView vk_get_or_create_tex_view(const void *tex_ptr) {
 
     uint32_t row_bytes = 0, rows = 0, slices = 0, bpb = 0;
     uint64_t base = 0; unsigned th = 0, td = 0;
-    if (nvn_deswizzle_geom(&t->d, 0, 0, &row_bytes, &rows, &slices, &base, &th, &td, &bpb) != 0 || row_bytes == 0 || rows == 0) {
-        return g_vk.dummy_view;
-    }
-    if (slices == 0) slices = 1;
-    if (base >= t->L.size) {
-        return g_vk.dummy_view;
+    int is_linear = (t->d.flags & 0x50) != 0;
+    if (is_linear) {
+        int bw = 1, bh = 1;
+        int ibpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
+        bpb = ibpb > 0 ? (uint32_t)ibpb : 1;
+        row_bytes = t->d.stride ? t->d.stride : t->d.width * bpb;
+        rows = t->d.height;
+        slices = 1;
+    } else {
+        if (nvn_deswizzle_geom(&t->d, 0, 0, &row_bytes, &rows, &slices, &base, &th, &td, &bpb) != 0 || row_bytes == 0 || rows == 0) {
+            return g_vk.dummy_view;
+        }
+        if (slices == 0) slices = 1;
+        if (base >= t->L.size) {
+            return g_vk.dummy_view;
+        }
     }
 
     int bpp = bpb > 0 ? (int)bpb : 4;
@@ -1871,9 +1891,13 @@ static VkImageView vk_get_or_create_tex_view(const void *tex_ptr) {
     uint8_t *lin = malloc(lin_sz);
     if (!lin) return g_vk.dummy_view;
 
-    if (nvn_deswizzle(&t->d, 0, 0, t->mem, lin, row_bytes) != 0) {
-        free(lin);
-        return g_vk.dummy_view;
+    if (is_linear) {
+        memcpy(lin, t->mem, lin_sz);
+    } else {
+        if (nvn_deswizzle(&t->d, 0, 0, t->mem, lin, row_bytes) != 0) {
+            free(lin);
+            return g_vk.dummy_view;
+        }
     }
 
     VkImageType img_type = (t->d.target == 2) ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
@@ -2168,6 +2192,17 @@ static void vk_update_and_bind_descriptors(VkCommandBuffer cb, vk_pipeline_entry
                 .pImageInfo = &di_info[n_writes]
             };
             n_writes++;
+        } else if (b->is_ssbo) {
+            db_info[n_writes] = (VkDescriptorBufferInfo){ .buffer = g_vk.support_buf, .offset = 0, .range = 65536 };
+            writes[n_writes] = (VkWriteDescriptorSet){
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = p->desc_sets[frame_idx][0],
+                .dstBinding = b->binding,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &db_info[n_writes]
+            };
+            n_writes++;
         }
     }
 
@@ -2273,6 +2308,17 @@ static void vk_update_and_bind_descriptors(VkCommandBuffer cb, vk_pipeline_entry
                 .pImageInfo = &di_info[n_writes]
             };
             n_writes++;
+        } else if (b->is_ssbo) {
+            db_info[n_writes] = (VkDescriptorBufferInfo){ .buffer = g_vk.support_buf, .offset = 0, .range = 65536 };
+            writes[n_writes] = (VkWriteDescriptorSet){
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = p->desc_sets[frame_idx][1],
+                .dstBinding = b->binding,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+                .pBufferInfo = &db_info[n_writes]
+            };
+            n_writes++;
         }
     }
 
@@ -2347,22 +2393,24 @@ static void vk_bind_vertex_buffers(VkCommandBuffer cb, vk_pipeline_entry *p) {
             stream_bound[stream] = 1;
             VkDeviceSize off = 0;
             if (g_vk.vbufs[stream].addr && g_vk.vbufs[stream].size > 0) {
-                size_t cur_off = (g_vk.vbuf_offset + 63) & ~63ULL;
-                size_t copy_sz = g_vk.vbufs[stream].size;
-                if (copy_sz > 1048576) copy_sz = 1048576;
-                if (cur_off + copy_sz <= 16777216) {
-                    memcpy((uint8_t *)g_vk.vbuf_mapped + cur_off, g_vk.vbufs[stream].addr, copy_sz);
-                    if (g_vk.FlushMappedMemoryRanges) {
-                        VkMappedMemoryRange range = {
-                            .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
-                            .memory = g_vk.vbuf_mem,
-                            .offset = cur_off,
-                            .size = (copy_sz + 0xFF) & ~0xFFULL
-                        };
-                        g_vk.FlushMappedMemoryRanges(g_vk.device, 1, &range);
+                {
+                    size_t cur_off = (g_vk.vbuf_offset + 63) & ~63ULL;
+                    size_t copy_sz = g_vk.vbufs[stream].size;
+                    if (copy_sz > 2097152) copy_sz = 2097152;
+                    if (cur_off + copy_sz <= 67108864) {
+                        memcpy((uint8_t *)g_vk.vbuf_mapped + cur_off, g_vk.vbufs[stream].addr, copy_sz);
+                        if (g_vk.FlushMappedMemoryRanges) {
+                            VkMappedMemoryRange range = {
+                                .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
+                                .memory = g_vk.vbuf_mem,
+                                .offset = cur_off,
+                                .size = (copy_sz + 0xFF) & ~0xFFULL
+                            };
+                            g_vk.FlushMappedMemoryRanges(g_vk.device, 1, &range);
+                        }
+                        off = cur_off;
+                        g_vk.vbuf_offset = cur_off + copy_sz;
                     }
-                    off = cur_off;
-                    g_vk.vbuf_offset = cur_off + copy_sz;
                 }
             }
             g_vk.CmdBindVertexBuffers(cb, stream, 1, &g_vk.vbuf, &off);
@@ -2448,7 +2496,7 @@ void vk_win_draw_indexed(int prim, int itype, uint32_t count, const void *ibuf, 
 
         if (itype == 0) {
             bytes_needed = (size_t)count * sizeof(uint16_t);
-            if (cur_off + bytes_needed <= 4194304) {
+            if (cur_off + bytes_needed <= 16777216) {
                 uint16_t *dst = (uint16_t *)((uint8_t *)g_vk.index_mapped + cur_off);
                 const uint8_t *src = (const uint8_t *)ibuf;
                 for (uint32_t i = 0; i < count; i++) dst[i] = (uint16_t)src[i];
@@ -2456,19 +2504,19 @@ void vk_win_draw_indexed(int prim, int itype, uint32_t count, const void *ibuf, 
             }
         } else if (itype == 1) {
             bytes_needed = (size_t)count * sizeof(uint16_t);
-            if (cur_off + bytes_needed <= 4194304) {
+            if (cur_off + bytes_needed <= 16777216) {
                 memcpy((uint8_t *)g_vk.index_mapped + cur_off, ibuf, bytes_needed);
                 vk_itype = VK_INDEX_TYPE_UINT16;
             }
         } else if (itype == 2) {
             bytes_needed = (size_t)count * sizeof(uint32_t);
-            if (cur_off + bytes_needed <= 4194304) {
+            if (cur_off + bytes_needed <= 16777216) {
                 memcpy((uint8_t *)g_vk.index_mapped + cur_off, ibuf, bytes_needed);
                 vk_itype = VK_INDEX_TYPE_UINT32;
             }
         }
 
-        if (bytes_needed > 0 && cur_off + bytes_needed <= 4194304) {
+        if (bytes_needed > 0 && cur_off + bytes_needed <= 16777216) {
             if (g_vk.FlushMappedMemoryRanges) {
                 VkMappedMemoryRange range = {
                     .sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE,
@@ -2489,6 +2537,29 @@ void vk_win_draw_indexed(int prim, int itype, uint32_t count, const void *ibuf, 
             if (g_vk.cur_frame == 60) {
                 fprintf(stderr, "[dm] [vk-win] DRAW_IDX [f=60] count=%u bv=%d vs=%s ps=%s\n",
                         count, base_vertex, g_vk.current_pipeline->vs_key, g_vk.current_pipeline->ps_key);
+                vk_shader_entry *vs_se = &g_vk_shaders[g_vk.current_pipeline->vs_sh_idx];
+                for (int k = 0; k < vs_se->num_inputs; k++) {
+                    uint32_t loc = vs_se->input_locations[k];
+                    uint32_t st = (loc < 16) ? g_vk.vattrs[loc].stream : 0;
+                    const float *vptr = (st < 16 && g_vk.vbufs[st].addr) ? (const float *)g_vk.vbufs[st].addr : NULL;
+                    if (vptr) {
+                        fprintf(stderr, "[dm] [vk-win] DRAW_IDX [f=60] vbuf st=%u loc=%u sz=%zu: v[0..7]=%g %g %g %g %g %g %g %g\n",
+                                st, loc, g_vk.vbufs[st].size, vptr[0], vptr[1], vptr[2], vptr[3], vptr[4], vptr[5], vptr[6], vptr[7]);
+                    } else {
+                        fprintf(stderr, "[dm] [vk-win] DRAW_IDX [f=60] vbuf st=%u loc=%u NULL!\n", st, loc);
+                    }
+                }
+                const float *u0 = (const float *)g_vk.ubo_addrs[0][0];
+                if (u0) {
+                    fprintf(stderr, "[dm] [vk-win] DRAW_IDX [f=60] vs_ubo0: %g %g %g %g | %g %g %g %g\n",
+                            u0[0], u0[1], u0[2], u0[3], u0[4], u0[5], u0[6], u0[7]);
+                } else {
+                    fprintf(stderr, "[dm] [vk-win] DRAW_IDX [f=60] vs_ubo0 is NULL!\n");
+                }
+                const void *st_tex = vk_get_stage_tex(1, 0);
+                VkImageView tv = vk_get_or_create_tex_view(st_tex);
+                fprintf(stderr, "[dm] [vk-win] DRAW_IDX [f=60] ps_tex0: tex_ptr=%p view=%p dummy=%p\n",
+                        st_tex, (void*)tv, (void*)g_vk.dummy_view);
             }
             g_vk.CmdDrawIndexed(cb, count, 1, 0, base_vertex, 0);
             g_vk.index_buf_offset = cur_off + bytes_needed;
@@ -2511,27 +2582,6 @@ void vk_win_end_frame(void) {
 
     uint32_t frame_idx = g_vk.frame_idx;
     VkCommandBuffer cb = g_vk.cmd_bufs[frame_idx];
-
-    if (g_vk.draw_count == 21) {
-        fprintf(stderr, "[dm] [vk-win] DIAG DRAW #21: vs=%s ps=%s pipe=%p\n",
-                g_vk.current_pipeline->vs_key, g_vk.current_pipeline->ps_key, (void*)g_vk.current_pipeline->pipeline);
-        vk_shader_entry *vs_se = &g_vk_shaders[g_vk.current_pipeline->vs_sh_idx];
-        fprintf(stderr, "[dm] [vk-win] DIAG DRAW #21 vs_inputs=%d\n", vs_se->num_inputs);
-        for (int k = 0; k < vs_se->num_inputs; k++) {
-            uint32_t loc = vs_se->input_locations[k];
-            uint32_t stream = (loc < 16) ? g_vk.vattrs[loc].stream : 0;
-            fprintf(stderr, "[dm] [vk-win] DIAG DRAW #21 attr %d: loc=%u stream=%u fmt=%#x off=%u vbuf_addr=%p vbuf_sz=%llu\n",
-                    k, loc, stream, g_vk.vattrs[loc].fmt, g_vk.vattrs[loc].offset,
-                    g_vk.vbufs[stream].addr, (unsigned long long)g_vk.vbufs[stream].size);
-        }
-        vk_shader_entry *ps_se = &g_vk_shaders[g_vk.current_pipeline->ps_sh_idx];
-        fprintf(stderr, "[dm] [vk-win] DIAG DRAW #21 ps_bindings=%d\n", ps_se->binding_count);
-        for (int k = 0; k < ps_se->binding_count; k++) {
-            fprintf(stderr, "[dm] [vk-win] DIAG DRAW #21 ps_bind %d: b=%u type=%d ubo=%d samp=%d slot=%d\n",
-                    k, ps_se->bindings[k].binding, ps_se->bindings[k].type,
-                    ps_se->bindings[k].is_ubo, ps_se->bindings[k].is_sampler, ps_se->bindings[k].tex_slot);
-        }
-    }
 
     g_vk.CmdEndRenderPass(cb);
 
@@ -2617,7 +2667,9 @@ void vk_win_end_frame(void) {
                 logged_submit + 1, frame_idx, (void*)cb, (void*)g_vk.sem_avail[frame_idx], (void*)g_vk.sem_finish[frame_idx], (void*)g_vk.fences[frame_idx], (int)fstatus);
     }
 
+    fprintf(stderr, "[dm] [vk-win] BEFORE QueueSubmit cur_frame=%u frame_idx=%u\n", g_vk.cur_frame, frame_idx);
     VkResult qres = g_vk.QueueSubmit(g_vk.queue, 1, &submit_info, VK_NULL_HANDLE);
+    fprintf(stderr, "[dm] [vk-win] AFTER QueueSubmit res=%d\n", (int)qres);
     if (qres != VK_SUCCESS) {
         static int logged_fail = 0;
         if (logged_fail++ < 20) {
@@ -2644,11 +2696,16 @@ void vk_win_end_frame(void) {
                 g_vk.InvalidateMappedMemoryRanges(g_vk.device, 1, &range);
             }
             uint32_t *px = (uint32_t *)g_vk.readback_mapped;
+            size_t nonzero_count = 0;
+            size_t total_px = (size_t)g_vk.width * g_vk.height;
+            for (size_t i = 0; i < total_px; i++) {
+                if (px[i] & 0x00FFFFFFu) nonzero_count++;
+            }
             static int logged_px = 0;
-            if (logged_px < 5) {
+            if (logged_px < 10) {
                 logged_px++;
-                fprintf(stderr, "[dm] [vk-win] GPU Readback Frame #%d pixels[0..3]=%#010x %#010x %#010x %#010x\n",
-                        logged_px, px[0], px[1], px[2], px[3]);
+                fprintf(stderr, "[dm] [vk-win] GPU Readback Frame #%d: nonzero_rgb=%llu / %llu, px[0..3]=%#010x %#010x %#010x %#010x\n",
+                        logged_px, (unsigned long long)nonzero_count, (unsigned long long)total_px, px[0], px[1], px[2], px[3]);
             }
         }
     }
@@ -2790,7 +2847,9 @@ void vk_win_present(const uint32_t *bgra, int width, int height) {
         fprintf(stderr, "[dm] [vk-win] SUBMIT DETAILS #%d frame_idx=%u cb=%p sem_avail=%p sem_fin=%p fence=%p\n",
                 logged_submit + 1, frame_idx, (void*)cb, (void*)g_vk.sem_avail[frame_idx], (void*)g_vk.sem_finish[frame_idx], (void*)g_vk.fences[frame_idx]);
     }
+    fprintf(stderr, "[dm] [vk-win] BEFORE QueueSubmit cur_frame=%u frame_idx=%u\n", g_vk.cur_frame, frame_idx);
     VkResult qres = g_vk.QueueSubmit(g_vk.queue, 1, &submit_info, VK_NULL_HANDLE);
+    fprintf(stderr, "[dm] [vk-win] AFTER QueueSubmit res=%d\n", (int)qres);
     VkResult widle = g_vk.DeviceWaitIdle(g_vk.device);
     if (qres != VK_SUCCESS) {
         static int logged_cfail = 0;
